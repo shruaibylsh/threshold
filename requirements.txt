@@ -1,0 +1,10 @@
+#torch==2.1.0+cu128
+#torchvision==0.15.0+cu128
+#torchaudio==2.1.0
+
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
+glob2
