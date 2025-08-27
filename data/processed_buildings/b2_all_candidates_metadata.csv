@@ -1,0 +1,10 @@
+csv_file,candidate_idx,start_idx,end_idx,window_file
+curve_01.csv,21,18,25,b2_curve_01_peak_021.npy
+curve_01.csv,33,30,37,b2_curve_01_peak_033.npy
+curve_01.csv,40,37,44,b2_curve_01_peak_040.npy
+curve_01.csv,60,57,64,b2_curve_01_peak_060.npy
+curve_01.csv,74,71,78,b2_curve_01_peak_074.npy
+curve_01.csv,89,86,93,b2_curve_01_peak_089.npy
+curve_01.csv,134,131,138,b2_curve_01_peak_134.npy
+curve_01.csv,143,140,147,b2_curve_01_peak_143.npy
+curve_01.csv,168,165,172,b2_curve_01_peak_168.npy
