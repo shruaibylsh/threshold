@@ -70,4 +70,5 @@ def get_small_config():
         intermediate_size=1024,
         decoder_hidden_size=128,
         decoder_num_hidden_layers=2,
+        decoder_num_attention_heads=4,  # Must divide decoder_hidden_size (128/4=32)
     )

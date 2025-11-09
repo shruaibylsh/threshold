@@ -157,18 +157,30 @@ class TimeSformerEncoder(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, add_pos_embed=True):
+        """
+        Forward pass through encoder.
+        Args:
+            x: Input tensor - either (B, T, C, H, W) images or (B, N, D) patches
+            add_pos_embed: Whether to add positional embeddings (default True)
+        Returns:
+            x: (B, N, D) encoded features
+        """
+        # If input is images, convert to patches
         if x.dim() == 5:
             x = self.patch_embed(x)
-        if mask is not None:
-            x = x + self.pos_embed[:, mask, :]
-        else:
+
+        # Add positional embeddings if requested
+        if add_pos_embed:
             x = x + self.pos_embed
-        x = self.pos_drop(x)
+            x = self.pos_drop(x)
+
+        # Pass through transformer blocks
         num_frames = self.config.num_frames
         num_patches_per_frame = self.patch_embed.num_patches
         for block in self.blocks:
             x = block(x, num_frames, num_patches_per_frame)
+
         x = self.norm(x)
         return x
 
@@ -273,15 +285,52 @@ class TimeSformerMAE(nn.Module):
         return loss
 
     def forward(self, imgs):
-        x = self.encoder.patch_embed(imgs)
+        """
+        Forward pass with masked autoencoding.
+        Args:
+            imgs: (B, T, C, H, W) - input video frames
+        Returns:
+            loss: reconstruction loss
+            pred: predicted patches
+            mask: binary mask (1 = masked, 0 = visible)
+        """
+        # 1. Patch embedding
+        x = self.encoder.patch_embed(imgs)  # (B, N, D) where N = total_patches
+
+        # 2. Random masking - keep only visible tokens
         x_masked, mask, ids_restore = self.random_masking(x)
-        x_masked = x_masked + torch.gather(
-            self.encoder.pos_embed.expand(x_masked.shape[0], -1, -1),
+        # x_masked: (B, len_keep, D) - only visible tokens
+        # mask: (B, N) - binary mask for all positions
+        # ids_restore: (B, N) - indices to restore original order
+
+        # 3. Add positional embeddings for the kept tokens only
+        B, len_keep, D = x_masked.shape
+        N = x.shape[1]  # total number of patches
+
+        # Get the indices of kept tokens
+        # ids_restore tells us how to unshuffle, so we invert it to get kept positions
+        ids_keep = torch.argsort(ids_restore, dim=1)[:, :len_keep]
+
+        # Gather positional embeddings for kept tokens
+        pos_embed_kept = torch.gather(
+            self.encoder.pos_embed.expand(B, -1, -1),
             dim=1,
-            index=torch.argsort(torch.argsort(torch.rand(x_masked.shape[0], x.shape[1], device=x.device), dim=1), dim=1)[:, :x_masked.shape[1]].unsqueeze(-1).expand(-1, -1, x_masked.shape[2])
+            index=ids_keep.unsqueeze(-1).expand(-1, -1, D)
         )
-        ids_keep = torch.argsort(torch.rand(x.shape[0], x.shape[1], device=x.device), dim=1)[:, :x_masked.shape[1]]
-        latent = self.encoder(x_masked, mask=ids_keep)
+        x_masked = x_masked + pos_embed_kept
+        x_masked = self.encoder.pos_drop(x_masked)
+
+        # 4. Pass through encoder blocks (manually to avoid double pos_embed)
+        num_frames = self.config.num_frames
+        num_patches_per_frame = self.encoder.patch_embed.num_patches
+        for block in self.encoder.blocks:
+            x_masked = block(x_masked, num_frames, num_patches_per_frame)
+        latent = self.encoder.norm(x_masked)
+
+        # 5. Decode to reconstruct masked patches
         pred = self.decoder(latent, ids_restore)
+
+        # 6. Compute reconstruction loss
         loss = self.forward_loss(imgs, pred, mask)
+
         return loss, pred, mask
