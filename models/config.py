@@ -1,26 +1,18 @@
 """
 Model configuration for TimeSformer with VideoMAE pretraining.
-Updated to work with HuggingFace TimeSformer.
 """
 from dataclasses import dataclass
 
 @dataclass
 class TimeSformerMAEConfig:
-    """
-    Configuration for TimeSformer encoder with VideoMAE pretraining.
-    Following section 3.3:
-    - 7-frame sequences
-    - Divided space-time attention
-    - 90% masking ratio
-    - Lightweight decoder
-    """
     # Video dimensions
     num_frames: int = 7
     image_height: int = 32
     image_width: int = 64
-    num_channels: int = 3  # After grayscale->RGB conversion
+    num_channels: int = 3
     # Patch settings
     patch_size: int = 4  # 4x4 spatial patches
+
     # Encoder architecture (TimeSformer)
     hidden_size: int = 384  # Embedding dimension
     num_hidden_layers: int = 8  # Transformer depth
@@ -28,15 +20,18 @@ class TimeSformerMAEConfig:
     intermediate_size: int = 1536  # FFN dimension (4x hidden_size)
     hidden_dropout_prob: float = 0.1
     attention_probs_dropout_prob: float = 0.1
+
     # Decoder architecture (lightweight)
     decoder_hidden_size: int = 192
     decoder_num_hidden_layers: int = 4
     decoder_num_attention_heads: int = 3
     decoder_intermediate_size: int = 768
+
     # MAE training
-    mask_ratio: float = 0.9  # 90% masking per section 3.3
-    norm_pix_loss: bool = True  # Normalize pixel values in loss
-    # Classification (for later)
+    mask_ratio: float = 0.9
+    norm_pix_loss: bool = True
+
+    # Classification
     num_labels: int = 8  # 8 threshold typologies
     def __post_init__(self):
         """Calculate derived properties."""
@@ -56,11 +51,9 @@ class TimeSformerMAEConfig:
         print(f"  Masked patches (~90%): ~{int(self.total_patches * self.mask_ratio)}")
 
 def get_mae_config():
-    """Get default MAE pretraining configuration."""
     return TimeSformerMAEConfig()
 
 def get_small_config():
-    """Get smaller model for faster testing."""
     return TimeSformerMAEConfig(
         hidden_size=256,
         num_hidden_layers=6,

@@ -1,6 +1,5 @@
 """
 Dataset loader for threshold sequences.
-Loads 7-frame depth panorama sequences for VideoMAE pretraining and classification.
 """
 import os
 import glob
@@ -13,11 +12,6 @@ from PIL import Image
 class ThresholdMAEDataset(Dataset):
     """
     Dataset for loading 7-frame threshold sequences for MAE pretraining.
-    Args:
-        metadata_csvs: List of paths to threshold CSV files
-        pano_folder: Path to folder containing panorama images
-        transform: Optional transforms to apply
-        image_size: Target image size (H, W). Default (32, 64)
     """
     def __init__(self, metadata_csvs, pano_folder, transform=None, image_size=(32, 64)):
         self.pano_folder = pano_folder
@@ -30,11 +24,10 @@ class ThresholdMAEDataset(Dataset):
             dfs.append(df)
         self.metadata = pd.concat(dfs, ignore_index=True)
         print(f"Loaded {len(self.metadata)} threshold sequences from {len(metadata_csvs)} files")
-        # Extract typology labels for classification (will use later)
-        # typology format: t1-1, t2-3, etc. -> extract first part (t1, t2, ...)
+
         self.metadata['typology_class'] = self.metadata['typology'].str.split('-').str[0]
         self.typology_to_idx = {
-            f't{i}': i-1 for i in range(1, 9)  # t1->0, t2->1, ..., t8->7
+            f't{i}': i-1 for i in range(1, 9)
         }
 
     def __len__(self):
@@ -96,13 +89,6 @@ class ThresholdMAEDataset(Dataset):
 def create_dataloaders(data_root, batch_size=16, train_split=0.85, num_workers=4):
     """
     Create train and validation dataloaders.
-    Args:
-        data_root: Root directory containing 'candidates' and 'panos' folders
-        batch_size: Batch size for training
-        train_split: Fraction of data to use for training
-        num_workers: Number of worker processes for data loading
-    Returns:
-        train_loader, val_loader
     """
     candidates_folder = os.path.join(data_root, 'candidates')
     pano_folder = os.path.join(data_root, 'panos')
