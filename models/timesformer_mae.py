@@ -146,16 +146,27 @@ class TimeSformerEncoder(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         """
         Args:
-            x: (B, N, D) patch embeddings (N = total_patches = 896)
+            x: (B, T, C, H, W) or (B, N, D) for masked input
+            mask: Optional mask for visible tokens
         Returns:
-            x: (B, N, D) encoded features
+            x: (B, N, D) encoded representations
         """
-        x = x + self.pos_embed
+        if x.dim() == 5:  # Full video input
+            # Patch embedding
+            x = self.patch_embed(x)  # (B, T*P, D)
+        
+        # Add positional embedding
+        if mask is not None:
+            x = x + self.pos_embed[:, mask, :]
+        else:
+            x = x + self.pos_embed
+        
         x = self.pos_drop(x)
         
+        # Apply transformer blocks
         num_frames = self.config.num_frames
         num_patches_per_frame = self.patch_embed.num_patches
         
@@ -163,8 +174,8 @@ class TimeSformerEncoder(nn.Module):
             x = block(x, num_frames, num_patches_per_frame)
         
         x = self.norm(x)
+        
         return x
-
 
 class MAEDecoder(nn.Module):
     """Lightweight decoder for masked autoencoding."""
