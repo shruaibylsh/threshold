@@ -1,12 +1,10 @@
 """
 TimeSformer with VideoMAE Pretraining.
 """
-
 import torch
 import torch.nn as nn
 from einops import rearrange
 import math
-
 
 class PatchEmbed(nn.Module):
     """Video to Patch Embedding."""
@@ -34,7 +32,6 @@ class PatchEmbed(nn.Module):
         x = rearrange(x, 'b t p e -> b (t p) e')
         return x
 
-
 class DividedSpaceTimeAttention(nn.Module):
     """Divided Space-Time Attention."""
     def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., attention_type='temporal'):
@@ -52,7 +49,6 @@ class DividedSpaceTimeAttention(nn.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        
         if self.attention_type == 'temporal':
             q = rearrange(q, 'b h (t p) d -> b h p t d', t=num_frames, p=num_patches_per_frame)
             k = rearrange(k, 'b h (t p) d -> b h p t d', t=num_frames, p=num_patches_per_frame)
@@ -62,7 +58,7 @@ class DividedSpaceTimeAttention(nn.Module):
             attn = self.attn_drop(attn)
             x = (attn @ v)
             x = rearrange(x, 'b h p t d -> b (t p) (h d)')
-        else:  # spatial
+        else:
             q = rearrange(q, 'b h (t p) d -> b h t p d', t=num_frames, p=num_patches_per_frame)
             k = rearrange(k, 'b h (t p) d -> b h t p d', t=num_frames, p=num_patches_per_frame)
             v = rearrange(v, 'b h (t p) d -> b h t p d', t=num_frames, p=num_patches_per_frame)
@@ -71,11 +67,9 @@ class DividedSpaceTimeAttention(nn.Module):
             attn = self.attn_drop(attn)
             x = (attn @ v)
             x = rearrange(x, 'b h t p d -> b (t p) (h d)')
-            
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
-
 
 class TransformerBlock(nn.Module):
     """Transformer block with divided space-time attention."""
@@ -101,13 +95,11 @@ class TransformerBlock(nn.Module):
         x = x + self.mlp(self.norm2(x))
         return x
 
-
 class TimeSformerEncoder(nn.Module):
     """TimeSformer Encoder with divided space-time attention."""
     def __init__(self, config):
         super().__init__()
         self.config = config
-        
         self.patch_embed = PatchEmbed(
             image_height=config.image_height,
             image_width=config.image_width,
@@ -115,11 +107,9 @@ class TimeSformerEncoder(nn.Module):
             in_channels=config.num_channels,
             embed_dim=config.hidden_size,
         )
-        
         num_patches = self.patch_embed.num_patches * config.num_frames
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, config.hidden_size))
         self.pos_drop = nn.Dropout(p=config.hidden_dropout_prob)
-        
         self.blocks = nn.ModuleList([
             TransformerBlock(
                 dim=config.hidden_size,
@@ -133,7 +123,6 @@ class TimeSformerEncoder(nn.Module):
             for i in range(config.num_hidden_layers)
         ])
         self.norm = nn.LayerNorm(config.hidden_size)
-        
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
         self.apply(self._init_weights)
 
@@ -147,34 +136,18 @@ class TimeSformerEncoder(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x, mask=None):
-        """
-        Args:
-            x: (B, T, C, H, W) or (B, N, D) for masked input
-            mask: Optional mask for visible tokens
-        Returns:
-            x: (B, N, D) encoded representations
-        """
-        if x.dim() == 5:  # Full video input
-            # Patch embedding
-            x = self.patch_embed(x)  # (B, T*P, D)
-        
-        # Add positional embedding
+        if x.dim() == 5:
+            x = self.patch_embed(x)
         if mask is not None:
             x = x + self.pos_embed[:, mask, :]
         else:
             x = x + self.pos_embed
-        
         x = self.pos_drop(x)
-        
-        # Apply transformer blocks
         num_frames = self.config.num_frames
         num_patches_per_frame = self.patch_embed.num_patches
-        
         for block in self.blocks:
             x = block(x, num_frames, num_patches_per_frame)
-        
         x = self.norm(x)
-        
         return x
 
 class MAEDecoder(nn.Module):
@@ -182,11 +155,10 @@ class MAEDecoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        
         self.decoder_embed = nn.Linear(config.hidden_size, config.decoder_hidden_size, bias=True)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, config.decoder_hidden_size))
         num_patches = config.total_patches
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches, config.decoder_hidden_size))
-        
         self.decoder_blocks = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=config.decoder_hidden_size,
@@ -198,11 +170,10 @@ class MAEDecoder(nn.Module):
             )
             for _ in range(config.decoder_num_hidden_layers)
         ])
-        
         self.decoder_norm = nn.LayerNorm(config.decoder_hidden_size)
         patch_dim = config.patch_size ** 2 * config.num_channels
         self.decoder_pred = nn.Linear(config.decoder_hidden_size, patch_dim, bias=True)
-        
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
         nn.init.trunc_normal_(self.decoder_pos_embed, std=0.02)
         self.apply(self._init_weights)
 
@@ -215,15 +186,17 @@ class MAEDecoder(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x):
+    def forward(self, x, ids_restore):
         x = self.decoder_embed(x)
+        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] - x.shape[1], 1)
+        x = torch.cat([x, mask_tokens], dim=1)
+        x = torch.gather(x, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, x.shape[2]))
         x = x + self.decoder_pos_embed
         for block in self.decoder_blocks:
             x = block(x)
         x = self.decoder_norm(x)
         x = self.decoder_pred(x)
         return x
-
 
 class TimeSformerMAE(nn.Module):
     """Complete TimeSformer with VideoMAE pretraining."""
@@ -232,29 +205,31 @@ class TimeSformerMAE(nn.Module):
         self.config = config
         self.encoder = TimeSformerEncoder(config)
         self.decoder = MAEDecoder(config)
-        
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
-        nn.init.trunc_normal_(self.mask_token, std=0.02)
-        
         self.mask_ratio = config.mask_ratio
 
     def random_masking(self, x):
         B, N, D = x.shape
-        len_keep = int(N * (1 - self.mask_ratio))
-        
-        noise = torch.rand(B, N, device=x.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        
-        mask = torch.ones([B, N], device=x.device)
-        mask[:, :len_keep] = 0
-        mask = torch.gather(mask, dim=1, index=ids_restore)
-        
-        # THE FIX: Replace masked patches with mask token, keep all N patches
-        mask_tokens = self.mask_token.expand(B, N, -1)
-        x_masked = x * (1 - mask.unsqueeze(-1)) + mask_tokens * mask.unsqueeze(-1)
-        
-        return x_masked, mask
+        T = self.config.num_frames
+        P = N // T
+        len_keep_spatial = int(P * (1 - self.mask_ratio))
+        noise = torch.rand(B, P, device=x.device)
+        ids_shuffle_spatial = torch.argsort(noise, dim=1)
+        ids_restore_spatial = torch.argsort(ids_shuffle_spatial, dim=1)
+        ids_keep_spatial = ids_shuffle_spatial[:, :len_keep_spatial]
+        ids_keep = []
+        for t in range(T):
+            ids_keep.append(ids_keep_spatial + t * P)
+        ids_keep = torch.cat(ids_keep, dim=1)
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D))
+        mask_spatial = torch.ones([B, P], device=x.device)
+        mask_spatial[:, :len_keep_spatial] = 0
+        mask_spatial = torch.gather(mask_spatial, dim=1, index=ids_restore_spatial)
+        mask = mask_spatial.unsqueeze(1).repeat(1, T, 1).reshape(B, N)
+        ids_restore = []
+        for t in range(T):
+            ids_restore.append(ids_restore_spatial + t * P)
+        ids_restore = torch.cat(ids_restore, dim=1)
+        return x_masked, mask, ids_restore
 
     def patchify(self, imgs):
         B, T, C, H, W = imgs.shape
@@ -287,25 +262,21 @@ class TimeSformerMAE(nn.Module):
         return loss
 
     def forward(self, imgs):
-        """
-        Args:
-            imgs: (B, T, C, H, W)
-        Returns:
-            loss, pred, mask
-        """
-        # 1. Patch embedding
-        x = self.encoder.patch_embed(imgs)  # (B, 896, D)
-        
-        # 2. Apply masking
-        x_masked, mask = self.random_masking(x)  # (B, 896, D)
-        
-        # 3. Encode
-        latent = self.encoder(x_masked)  # (B, 896, D)
-        
-        # 4. Decode
-        pred = self.decoder(latent)  # (B, 896, patch_dim)
-        
-        # 5. Loss
+        x = self.encoder.patch_embed(imgs)
+        x_masked, mask, ids_restore = self.random_masking(x)
+        B, N = mask.shape
+        pos_embed_visible = torch.zeros_like(x_masked)
+        for b in range(B):
+            visible_indices = torch.where(mask[b] == 0)[0]
+            pos_embed_visible[b] = self.encoder.pos_embed[0, visible_indices, :]
+        x_masked = x_masked + pos_embed_visible
+        x_masked = self.encoder.pos_drop(x_masked)
+        num_frames = self.config.num_frames
+        total_patches_per_frame = self.encoder.patch_embed.num_patches
+        num_patches_per_frame_visible = int(total_patches_per_frame * (1 - self.mask_ratio))
+        for block in self.encoder.blocks:
+            x_masked = block(x_masked, num_frames, num_patches_per_frame_visible)
+        latent = self.encoder.norm(x_masked)
+        pred = self.decoder(latent, ids_restore)
         loss = self.forward_loss(imgs, pred, mask)
-        
         return loss, pred, mask
