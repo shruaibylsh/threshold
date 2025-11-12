@@ -49,7 +49,16 @@ class DividedSpaceTimeAttention(nn.Module):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        if self.attention_type == 'temporal':
+
+        # Check if N is evenly divisible by T*P (required for divided attention)
+        # With asymmetric masking, this may not be true, so fall back to standard attention
+        if N != num_frames * num_patches_per_frame:
+            # Fallback to standard self-attention (no space-time division)
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        elif self.attention_type == 'temporal':
             q = rearrange(q, 'b h (t p) d -> b h p t d', t=num_frames, p=num_patches_per_frame)
             k = rearrange(k, 'b h (t p) d -> b h p t d', t=num_frames, p=num_patches_per_frame)
             v = rearrange(v, 'b h (t p) d -> b h p t d', t=num_frames, p=num_patches_per_frame)
