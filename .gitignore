@@ -3,3 +3,4 @@ _pycache_/
 model_training/
 checkpoints/
 output_oldMAE/
+models/_pycache_/

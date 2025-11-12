@@ -207,7 +207,8 @@ class TimeSformerMAE(nn.Module):
         self.decoder = MAEDecoder(config)
         self.mask_ratio = config.mask_ratio
 
-    def random_masking(self, x):
+    def random_masking_old(self, x):
+        """OLD TUBE MASKING: Same spatial patches masked across all frames."""
         B, N, D = x.shape
         T = self.config.num_frames
         P = N // T
@@ -229,6 +230,105 @@ class TimeSformerMAE(nn.Module):
         for t in range(T):
             ids_restore.append(ids_restore_spatial + t * P)
         ids_restore = torch.cat(ids_restore, dim=1)
+        return x_masked, mask, ids_restore
+
+    def random_masking(self, x):
+        """
+        IMPROVED ASYMMETRIC MASKING:
+        - Mask frames 0-1 (before) and 5-6 (after) HEAVILY (90%)
+        - Keep middle frames 2-4 (context) MORE VISIBLE (50%)
+
+        This forces the encoder to learn typology-distinguishing features
+        in the before/after states by requiring their reconstruction from context.
+
+        Args:
+            x: (B, N, D) where N = T * P (896 = 7 * 128)
+        Returns:
+            x_masked: (B, num_visible, D) visible patches only
+            mask: (B, N) binary mask (0=visible, 1=masked)
+            ids_restore: (B, N) indices to restore original order
+        """
+        B, N, D = x.shape
+        T = self.config.num_frames  # 7
+        P = N // T  # 128 patches per frame
+
+        # Define mask ratios per frame
+        # Frames 0-1 and 5-6: mask heavily (these contain typology-specific info)
+        # Frames 2-4: mask moderately (provide context for reconstruction)
+        frame_mask_ratios = torch.tensor([
+            0.90,  # Frame 0: BEFORE - mask heavily
+            0.90,  # Frame 1: BEFORE - mask heavily
+            0.50,  # Frame 2: CONTEXT - moderate
+            0.50,  # Frame 3: CONTEXT - moderate
+            0.50,  # Frame 4: CONTEXT - moderate
+            0.90,  # Frame 5: AFTER - mask heavily
+            0.90,  # Frame 6: AFTER - mask heavily
+        ], device=x.device)
+
+        ids_keep_all = []
+        mask_all = []
+
+        for b in range(B):
+            frame_ids_keep = []
+            frame_masks = []
+
+            for t in range(T):
+                mask_ratio = frame_mask_ratios[t].item()
+
+                # Patches for this frame
+                frame_start = t * P
+
+                # Random masking within frame
+                len_keep = int(P * (1 - mask_ratio))
+                noise = torch.rand(P, device=x.device)
+                ids_shuffle = torch.argsort(noise)
+                ids_keep_frame = ids_shuffle[:len_keep] + frame_start
+
+                frame_ids_keep.append(ids_keep_frame)
+
+                # Create mask (0=visible, 1=masked)
+                frame_mask = torch.ones(P, device=x.device)
+                frame_mask[ids_shuffle[:len_keep]] = 0
+                frame_masks.append(frame_mask)
+
+            # Concatenate all frames
+            ids_keep_batch = torch.cat(frame_ids_keep)
+            mask_batch = torch.cat(frame_masks)
+
+            ids_keep_all.append(ids_keep_batch)
+            mask_all.append(mask_batch)
+
+        # Stack batches
+        ids_keep = torch.stack(ids_keep_all)  # (B, num_visible)
+        mask = torch.stack(mask_all)  # (B, N)
+
+        # Gather visible patches
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D))
+
+        # Create restore indices
+        # This maps from the concatenated [visible_patches, masked_patches] back to original order
+        ids_restore_all = []
+        for b in range(B):
+            # Get masked positions
+            masked_positions = torch.where(mask[b] == 1)[0]
+
+            # Create full restore mapping
+            ids_restore_batch = torch.zeros(N, dtype=torch.long, device=x.device)
+
+            # Visible patches keep their order in the masked sequence
+            ids_restore_batch[ids_keep[b]] = torch.arange(len(ids_keep[b]), device=x.device)
+
+            # Masked patches come after visible patches
+            ids_restore_batch[masked_positions] = torch.arange(
+                len(ids_keep[b]),
+                N,
+                device=x.device
+            )
+
+            ids_restore_all.append(ids_restore_batch)
+
+        ids_restore = torch.stack(ids_restore_all)  # (B, N)
+
         return x_masked, mask, ids_restore
 
     def patchify(self, imgs):
@@ -262,8 +362,23 @@ class TimeSformerMAE(nn.Module):
         return loss
 
     def forward(self, imgs):
-        x = self.encoder.patch_embed(imgs)
+        """
+        Forward pass with improved asymmetric masking.
+
+        Args:
+            imgs: (B, T, C, H, W) input video
+        Returns:
+            loss: reconstruction loss
+            pred: (B, N, patch_dim) predicted patches
+            mask: (B, N) binary mask
+        """
+        # 1. Patchify
+        x = self.encoder.patch_embed(imgs)  # (B, N, D) where N = T*P = 896
+
+        # 2. Apply asymmetric masking
         x_masked, mask, ids_restore = self.random_masking(x)
+
+        # 3. Add positional embeddings (only for visible patches)
         B, N = mask.shape
         pos_embed_visible = torch.zeros_like(x_masked)
         for b in range(B):
@@ -271,12 +386,24 @@ class TimeSformerMAE(nn.Module):
             pos_embed_visible[b] = self.encoder.pos_embed[0, visible_indices, :]
         x_masked = x_masked + pos_embed_visible
         x_masked = self.encoder.pos_drop(x_masked)
+
+        # 4. Pass through encoder
+        # With asymmetric masking, we have variable patches per frame
+        # Calculate average visible patches per frame for attention operations
         num_frames = self.config.num_frames
         total_patches_per_frame = self.encoder.patch_embed.num_patches
-        num_patches_per_frame_visible = int(total_patches_per_frame * (1 - self.mask_ratio))
+        num_visible = x_masked.shape[1]
+        num_patches_per_frame_visible = num_visible // num_frames
+
         for block in self.encoder.blocks:
             x_masked = block(x_masked, num_frames, num_patches_per_frame_visible)
+
         latent = self.encoder.norm(x_masked)
+
+        # 5. Decode
         pred = self.decoder(latent, ids_restore)
+
+        # 6. Calculate loss
         loss = self.forward_loss(imgs, pred, mask)
+
         return loss, pred, mask

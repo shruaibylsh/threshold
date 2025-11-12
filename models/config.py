@@ -28,8 +28,13 @@ class TimeSformerMAEConfig:
     decoder_intermediate_size: int = 768
 
     # MAE training
-    mask_ratio: float = 0.9
+    mask_ratio: float = 0.9  # NOTE: With asymmetric masking, this is not uniformly applied
     norm_pix_loss: bool = True
+
+    # Asymmetric masking ratios (per frame)
+    # Frames 0-1 (before) and 5-6 (after): mask heavily to force learning
+    # Frames 2-4 (context): mask moderately to provide reconstruction context
+    frame_mask_ratios: tuple = (0.90, 0.90, 0.50, 0.50, 0.50, 0.90, 0.90)
 
     # Classification
     num_labels: int = 8  # 8 threshold typologies
