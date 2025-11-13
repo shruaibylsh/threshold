@@ -5,7 +5,7 @@ checkpoints/
 output_oldMAE/
 models/_pycache_/
 MAE/
-old/models/
+archive_simclr/models/
 temporal/
 output_temporal_order/
 output_classifier/
