@@ -108,15 +108,28 @@ class FrameOrderModel(nn.Module):
             loss: scalar loss
             logits: (B, T, num_positions) position predictions
         """
-        B = x.shape[0]
+        B, T, C, H, W = x.shape
 
-        # Encode shuffled sequence
-        # x: (B, T, C, H, W) -> (B, T*S, D)
-        h = self.encoder(x)
+        # Encode shuffled sequence - get tokens before pooling
+        # We need to manually run encoder forward to get tokens
+        x_flat = x.reshape(B * T, C, H, W)  # [B*T, C, H, W]
+        tokens, (Hp, Wp) = self.encoder.patch_embed(x_flat)  # [B*T, S, D]
+        S = tokens.shape[1]
+        tokens = tokens.reshape(B, T, S, -1)  # [B, T, S, D]
+
+        # Add positional embeddings
+        tokens = tokens + self.encoder.temb[:, :T, :].unsqueeze(2) + self.encoder.semb[:, :S, :].unsqueeze(1)
+        x_tokens = tokens.reshape(B, T * S, -1)  # [B, T*S, D]
+
+        # Run through transformer blocks
+        for blk in self.encoder.blocks:
+            x_tokens = blk(x_tokens, T=T, S=S)
+
+        x_tokens = self.encoder.norm(x_tokens)  # [B, T*S, D]
 
         # Reshape to separate temporal and spatial dimensions
         # (B, T*S, D) -> (B, T, S, D)
-        h = h.view(B, self.T, self.S, -1)
+        h = x_tokens.view(B, T, S, -1)
 
         # Average pool over spatial patches for each frame
         # (B, T, S, D) -> (B, T, D)
@@ -146,13 +159,26 @@ class FrameOrderModel(nn.Module):
         Returns:
             embeddings: (B, T, D) frame embeddings
         """
-        B = x.shape[0]
+        B, T, C, H, W = x.shape
 
-        # Encode
-        h = self.encoder(x)  # (B, T*S, D)
+        # Encode - get tokens before pooling
+        x_flat = x.reshape(B * T, C, H, W)  # [B*T, C, H, W]
+        tokens, (Hp, Wp) = self.encoder.patch_embed(x_flat)  # [B*T, S, D]
+        S = tokens.shape[1]
+        tokens = tokens.reshape(B, T, S, -1)  # [B, T, S, D]
+
+        # Add positional embeddings
+        tokens = tokens + self.encoder.temb[:, :T, :].unsqueeze(2) + self.encoder.semb[:, :S, :].unsqueeze(1)
+        x_tokens = tokens.reshape(B, T * S, -1)  # [B, T*S, D]
+
+        # Run through transformer blocks
+        for blk in self.encoder.blocks:
+            x_tokens = blk(x_tokens, T=T, S=S)
+
+        x_tokens = self.encoder.norm(x_tokens)  # [B, T*S, D]
 
         # Reshape and pool
-        h = h.view(B, self.T, self.S, -1)  # (B, T, S, D)
+        h = x_tokens.view(B, T, S, -1)  # (B, T, S, D)
         h_frames = h.mean(dim=2)  # (B, T, D)
 
         return h_frames
