@@ -6,3 +6,6 @@ output_oldMAE/
 models/_pycache_/
 MAE/
 old/models/
+temporal/
+output_temporal_order/
+output_classifier/

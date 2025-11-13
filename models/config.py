@@ -9,17 +9,25 @@ class TimeSformerMAEConfig:
     num_frames: int = 7
     image_height: int = 32
     image_width: int = 64
-    num_channels: int = 3
+    num_channels: int = 1  # CHANGED: Grayscale instead of RGB
     # Patch settings
-    patch_size: int = 4  # 4x4 spatial patches
+    patch_size: int = 8  # CHANGED: 8x8 spatial patches instead of 4x4
 
     # Encoder architecture (TimeSformer)
     hidden_size: int = 384  # Embedding dimension
-    num_hidden_layers: int = 8  # Transformer depth
+    num_hidden_layers: int = 6  # CHANGED: 6 layers instead of 8
     num_attention_heads: int = 6
     intermediate_size: int = 1536  # FFN dimension (4x hidden_size)
     hidden_dropout_prob: float = 0.1
-    attention_probs_dropout_prob: float = 0.1
+    attention_probs_dropout_prob: float = 0.0  # CHANGED: 0.0 instead of 0.1
+
+    # SimCLR training hyperparameters
+    learning_rate: float = 3e-4   # CHANGED: 3e-4 instead of default 1e-4
+    weight_decay: float = 5e-4     # CHANGED: 5e-4 instead of default 1e-4
+    batch_size: int = 128          # CHANGED: 128 instead of default 16
+    temperature: float = 0.1       # SimCLR temperature
+    proj_hidden: int = 512         # Projection head hidden dim
+    proj_out: int = 128            # Projection head output dim
 
     # Decoder architecture (lightweight)
     decoder_hidden_size: int = 192
