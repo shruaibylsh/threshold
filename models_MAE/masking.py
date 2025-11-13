@@ -1,8 +1,13 @@
 """
-Asymmetric masking strategy for Threshold sequence MAE pretraining.
+Asymmetric TUBE masking strategy for Threshold sequence MAE pretraining.
 
-The key idea: Mask "before" and "after" frames heavily, but keep "at threshold"
-frames relatively visible to provide reconstruction context.
+Video MAE uses TUBE masking: same spatial positions are masked across all frames.
+This creates temporal consistency and allows learning temporal dynamics.
+
+Combined with asymmetric masking ratios for threshold learning:
+- Frames 0-1 (before): mask heavily (90%)
+- Frames 2-4 (at threshold): mask moderately (50%) - provide context
+- Frames 5-6 (after): mask heavily (90%)
 """
 import torch
 import numpy as np
@@ -15,7 +20,13 @@ def random_masking_asymmetric(
     num_patches_per_frame: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Perform asymmetric random masking with different ratios per frame.
+    Perform asymmetric TUBE masking with different ratios per frame.
+
+    TUBE MASKING: Same spatial positions are masked/kept across all frames.
+    This is the key difference from image MAE - creates temporal consistency.
+
+    ASYMMETRIC: Different frames have different mask ratios, but the SPATIAL
+    positions are ordered the same way across all frames.
 
     Args:
         x: [B, T*S, D] patch embeddings (T frames, S patches/frame)
@@ -35,6 +46,14 @@ def random_masking_asymmetric(
     # Reshape to [B, T, S, D] to apply per-frame masking
     x_frames = x.reshape(B, T, S, D)
 
+    # ============================================================
+    # KEY: Sample random order ONCE for spatial positions
+    # This creates TUBES - same spatial positions across all frames
+    # ============================================================
+    noise = torch.rand(B, S, device=x.device)  # [B, S] - SAME for all frames!
+    ids_shuffle = torch.argsort(noise, dim=1)  # [B, S] - spatial position ordering
+    ids_restore_spatial = torch.argsort(ids_shuffle, dim=1)  # [B, S]
+
     # Lists to collect kept/masked patches
     x_kept_frames = []
     mask_frames = []
@@ -47,23 +66,22 @@ def random_masking_asymmetric(
         # Number of patches to keep for this frame
         len_keep = int(S * (1 - mask_ratio_t))
 
-        # Random shuffle
-        noise = torch.rand(B, S, device=x.device)  # [B, S]
-        ids_shuffle = torch.argsort(noise, dim=1)  # [B, S]
-        ids_restore_t = torch.argsort(ids_shuffle, dim=1)  # [B, S]
-
-        # Keep first len_keep patches
+        # Use SAME spatial ordering (ids_shuffle) for all frames!
+        # But keep different amounts per frame
         ids_keep = ids_shuffle[:, :len_keep]  # [B, len_keep]
+
+        # Gather kept patches
         x_kept_t = torch.gather(x_t, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D))
 
         # Binary mask: 1 = masked, 0 = kept
         mask_t = torch.ones(B, S, device=x.device)
         mask_t[:, :len_keep] = 0
-        mask_t = torch.gather(mask_t, dim=1, index=ids_restore_t)  # [B, S]
+        # Restore to original spatial order for this frame
+        mask_t = torch.gather(mask_t, dim=1, index=ids_restore_spatial)  # [B, S]
 
         x_kept_frames.append(x_kept_t)
         mask_frames.append(mask_t)
-        ids_restore_frames.append(ids_restore_t)
+        ids_restore_frames.append(ids_restore_spatial)
 
     # Concatenate across frames
     x_masked = torch.cat(x_kept_frames, dim=1)  # [B, sum(len_keep), D]
