@@ -167,12 +167,23 @@ class BuildingDataset(torch.utils.data.Dataset):
             print(f"Loaded {building_id}: {len(df)} thresholds")
 
             # Each row is a threshold candidate
+            # CSV format: typology, curve, candidate_frame, window_start, window_end
             for idx, row in df.iterrows():
-                threshold_id = row.iloc[0]  # First column (e.g., "b1-1")
-                frame_indices = row.iloc[1:8].astype(int).tolist()  # Next 7 columns
+                # Generate 7 frame indices from window_start to window_end
+                window_start = int(row['window_start'])
+                window_end = int(row['window_end'])
+                frame_indices = list(range(window_start, window_end + 1))
+
+                # Get curve name
+                curve = row['curve']
+                candidate_frame = int(row['candidate_frame'])
+
+                # Create threshold ID
+                threshold_id = f"{building_id}_{curve}_f{candidate_frame:02d}"
 
                 self.samples.append({
                     'building_id': building_id,
+                    'curve': curve,  # Store curve name for image loading
                     'threshold_id': threshold_id,
                     'frame_indices': frame_indices
                 })
@@ -196,6 +207,7 @@ class BuildingDataset(torch.utils.data.Dataset):
         """
         sample = self.samples[idx]
         building_id = sample['building_id']
+        curve = sample['curve']
         threshold_id = sample['threshold_id']
         frame_indices = sample['frame_indices']
 
@@ -210,18 +222,11 @@ class BuildingDataset(torch.utils.data.Dataset):
 
         frames = []
         for frame_idx in frame_indices:
-            # Format: b1_curve_00_000.jpg
+            # Format: b1_curve_01_011.png
             pano_path = os.path.join(
                 self.panos_dir,
-                f'{building_id}_curve_{frame_idx:02d}_{0:03d}.jpg'
+                f'{building_id}_{curve}_{frame_idx:03d}.png'
             )
-
-            if not os.path.exists(pano_path):
-                # Try alternative naming
-                pano_path = os.path.join(
-                    self.panos_dir,
-                    f'{building_id}_curve_{frame_idx:02d}_000.jpg'
-                )
 
             if os.path.exists(pano_path):
                 img = Image.open(pano_path).convert('L')  # Grayscale
