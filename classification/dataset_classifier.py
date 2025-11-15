@@ -169,10 +169,23 @@ class BuildingDataset(torch.utils.data.Dataset):
             # Each row is a threshold candidate
             # CSV format: typology, curve, candidate_frame, window_start, window_end
             for idx, row in df.iterrows():
-                # Generate 7 frame indices from window_start to window_end
+                # Generate frame indices from window_start to window_end
                 window_start = int(row['window_start'])
                 window_end = int(row['window_end'])
-                frame_indices = list(range(window_start, window_end + 1))
+                all_frame_indices = list(range(window_start, window_end + 1))
+
+                # Ensure exactly 7 frames (model requirement)
+                if len(all_frame_indices) < 7:
+                    # Pad by repeating the last frame
+                    while len(all_frame_indices) < 7:
+                        all_frame_indices.append(all_frame_indices[-1])
+                elif len(all_frame_indices) > 7:
+                    # Take center 7 frames
+                    center_idx = len(all_frame_indices) // 2
+                    start_idx = center_idx - 3
+                    all_frame_indices = all_frame_indices[start_idx:start_idx + 7]
+
+                frame_indices = all_frame_indices
 
                 # Get curve name
                 curve = row['curve']
@@ -231,12 +244,15 @@ class BuildingDataset(torch.utils.data.Dataset):
             if os.path.exists(pano_path):
                 img = Image.open(pano_path).convert('L')  # Grayscale
                 img_tensor = transform(img)  # [1, 32, 64]
+                # Create new tensor with fresh storage to avoid resize issues
+                img_tensor = torch.tensor(img_tensor.numpy(), dtype=torch.float32)
                 frames.append(img_tensor)
             else:
                 print(f"⚠ Warning: {pano_path} not found, using zeros")
                 frames.append(torch.zeros(1, 32, 64))
 
-        frames = torch.stack(frames, dim=0)  # [7, 1, 32, 64]
+        # Stack and ensure contiguous memory layout for multiprocessing
+        frames = torch.stack(frames, dim=0).contiguous()  # [7, 1, 32, 64]
 
         return {
             'frames': frames,
@@ -251,7 +267,7 @@ def create_building_dataloader(
     candidates_dir,
     building_ids=['b1', 'b2', 'b3', 'b4'],
     batch_size=16,
-    num_workers=2
+    num_workers=0
 ):
     """
     Create dataloader for real building thresholds.
