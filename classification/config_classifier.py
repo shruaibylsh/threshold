@@ -9,7 +9,7 @@ import os
 @dataclass
 class ClassifierConfig:
     # Pretrained encoder path
-    pretrained_encoder_path: str = '../MAE_models/output_mae_adjusted/encoder_mae_pretrained.pt'
+    pretrained_encoder_path: str = '../models_MAE/output_mae_adjusted/encoder_mae_pretrained.pt'
 
     # Model architecture
     num_classes: int = 8  # t1 through t8
@@ -26,7 +26,7 @@ class ClassifierConfig:
     learning_rate: float = 1e-3  # Higher for frozen, lower (1e-4) for fine-tuning
     weight_decay: float = 1e-4
     batch_size: int = 32
-    num_epochs: int = 100
+    num_epochs: int = 20
 
     # Data split
     train_split: float = 0.70

@@ -4,13 +4,13 @@ Dataset for threshold typology classification.
 Reuses MAE dataset but ensures labels are returned for supervised learning.
 """
 import sys
-sys.path.append('../MAE_models')
+sys.path.append('../models_MAE')
 
 import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, random_split
-from dataset_mae import ThresholdDataset
+from dataset_mae import ThresholdSequenceDatasetMAE
 
 
 def create_classifier_dataloaders(
@@ -35,10 +35,19 @@ def create_classifier_dataloaders(
     Returns:
         train_loader, val_loader, test_loader, full_dataset, train_indices, val_indices, test_indices
     """
+    # Find all CSV files in candidates directory
+    candidates_dir = os.path.join(data_root, 'candidates')
+    csv_files = [os.path.join(candidates_dir, f) for f in os.listdir(candidates_dir)
+                 if f.endswith('.csv') and not f.startswith('b')]  # Exclude building CSVs
+    csv_files = sorted(csv_files)
+
+    # Panorama folder
+    pano_folder = os.path.join(data_root, 'panos')
+
     # Create full dataset
-    full_dataset = ThresholdDataset(
-        panos_dir=os.path.join(data_root, 'panos'),
-        candidates_dir=os.path.join(data_root, 'candidates')
+    full_dataset = ThresholdSequenceDatasetMAE(
+        metadata_csvs=csv_files,
+        pano_folder=pano_folder
     )
 
     total_size = len(full_dataset)

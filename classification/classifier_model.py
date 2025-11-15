@@ -6,9 +6,9 @@ Combines pretrained MAE encoder with MLP head for supervised classification.
 import sys
 import os
 
-# Add MAE_models to path (absolute path from this file's location)
+# Add models_MAE to path (absolute path from this file's location)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-mae_models_path = os.path.join(current_dir, '..', 'MAE_models')
+mae_models_path = os.path.join(current_dir, '..', 'models_MAE')
 if mae_models_path not in sys.path:
     sys.path.insert(0, mae_models_path)
 
@@ -66,8 +66,8 @@ class ThresholdClassifier(nn.Module):
         mae_config = get_mae_config()
         full_mae_model = TimeSformerMAE(mae_config)
 
-        # Load pretrained weights
-        state_dict = torch.load(pretrained_path, map_location='cpu')
+        # Load pretrained weights (weights_only=False for compatibility)
+        state_dict = torch.load(pretrained_path, map_location='cpu', weights_only=False)
 
         # Filter to only encoder components
         encoder_state = {}
@@ -106,9 +106,11 @@ class ThresholdClassifier(nn.Module):
             logits: [B, num_classes] class logits
             features (optional): [B, encoder_dim] pooled features
         """
-        # Encode with NO masking (mask_ratio=0)
+        # Encode with NO masking (all frame_mask_ratios=0)
         with torch.set_grad_enabled(not self.config.freeze_encoder):
-            x_encoded, _, _ = self.encoder.forward_encoder(x, mask_ratio=0)
+            # forward_encoder expects frame_mask_ratios tuple for 7 frames
+            frame_mask_ratios = (0, 0, 0, 0, 0, 0, 0)  # No masking
+            x_encoded, _, _ = self.encoder.forward_encoder(x, frame_mask_ratios)
             # x_encoded: [B, 224, encoder_dim]
 
         # Global average pooling over all tokens
