@@ -8,3 +8,5 @@ MAE/
 archive_simclr/models/
 temporal/
 output_temporal_order/
+DRAWING.ipynb
+data/test
